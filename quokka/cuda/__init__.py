@@ -18,7 +18,8 @@ import torch
 CSRC = pathlib.Path(__file__).parent / "csrc"
 NAME = "quokka_cuda"
 SOURCES = sorted(str(p) for p in CSRC.glob("*.c*"))
-CUDA_FLAGS = ["-O3", "-std=c++17", "--expt-relaxed-constexpr"]
+# torch adds -std=c++20 itself (its headers require it), so no -std here.
+CUDA_FLAGS = ["-O3", "--expt-relaxed-constexpr"]
 
 
 def build(build_dir: str | None = None):
@@ -31,7 +32,7 @@ def build(build_dir: str | None = None):
         name=NAME,
         sources=SOURCES,
         extra_cuda_cflags=CUDA_FLAGS,
-        extra_cflags=["-O3", "-std=c++17"],
+        extra_cflags=["-O3"],
         build_directory=build_dir,
         verbose=False,
     )
