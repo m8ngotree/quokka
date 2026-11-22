@@ -6,14 +6,21 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-    "jax==0.11.2",
     "numpy>=2.0",
 ]
+
+[project.optional-dependencies]
+# GPU: PyTorch references and CUDA kernels (`uv sync --extra gpu`).
+gpu = ["torch>=2.9"]
+# TPU: JAX and Pallas kernels (`uv sync --extra tpu`).
+tpu = ["jax==0.11.2"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "ruff>=0.17.4",
+    # Independent FP4/FP8 casts, used as the oracle in tests.
+    "ml_dtypes>=0.5",
 ]
 
 [tool.pytest.ini_options]

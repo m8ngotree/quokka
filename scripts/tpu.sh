@@ -54,7 +54,7 @@ case "${1:-}" in
     gcloud compute tpus tpu-vm scp --zone "$(zone)" --recurse \
       pyproject.toml uv.lock LICENSE quokka bench tests "$NAME:~/$REPO_DIR/"
     ssh_vm "command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh;
-            cd ~/$REPO_DIR && ~/.local/bin/uv sync -q && ~/.local/bin/uv pip install -q 'jax[tpu]==0.11.2'" ;;
+            cd ~/$REPO_DIR && ~/.local/bin/uv sync -q --extra tpu && ~/.local/bin/uv pip install -q 'jax[tpu]==0.11.2'" ;;
   run)
     ssh_vm "cd ~/$REPO_DIR && ~/.local/bin/uv run --no-sync ${2:?command}" ;;
   fetch)
