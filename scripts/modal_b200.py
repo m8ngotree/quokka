@@ -13,6 +13,10 @@ Modal bills GPUs per second, so the setup avoids paying for idle time:
   image definition changes.
 - The repo is mounted at container start rather than copied into the image,
   so editing code never triggers a rebuild.
+- CUDA code is compiled first on a CPU-only container, which costs a small
+  fraction of a GPU second. The built extension goes into a Modal Volume and
+  the B200 imports it directly, so nvcc never runs on GPU time. Pass
+  `--no-build` to skip compiling for commands that don't need the kernels.
 - The container scales down 2 s after going idle, `max_containers=1` stops
   accidental fan-out, and a 30-minute timeout caps a runaway job.
 
@@ -21,6 +25,7 @@ The GPU seconds actually used are printed at the end of each run.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -53,17 +58,40 @@ image = (
 
 app = modal.App("quokka-b200", image=image)
 
+BUILD = "/build"
+build_volume = modal.Volume.from_name("quokka-build", create_if_missing=True)
 
-@app.function(gpu="B200", timeout=30 * 60, scaledown_window=2, max_containers=1)
-def run(cmd: str) -> int:
+
+@app.function(cpu=8, memory=16 * 1024, timeout=20 * 60, volumes={BUILD: build_volume})
+def compile_cuda() -> str:
+    """Build the CUDA extension without a GPU; return the path of the .so."""
+    from quokka.cuda import build
+
     start = time.monotonic()
-    code = subprocess.run(cmd, shell=True, cwd=REMOTE).returncode
+    module = build(f"{BUILD}/torch_ext")
+    build_volume.commit()
+    print(f"[quokka] compiled on CPU in {time.monotonic() - start:.1f} s")
+    return module.__file__
+
+
+@app.function(
+    gpu="B200",
+    timeout=30 * 60,
+    scaledown_window=2,
+    max_containers=1,
+    volumes={BUILD: build_volume},
+)
+def run(cmd: str, prebuilt: str | None = None) -> int:
+    env = dict(os.environ, QUOKKA_PREBUILT=prebuilt) if prebuilt else None
+    start = time.monotonic()
+    code = subprocess.run(cmd, shell=True, cwd=REMOTE, env=env).returncode
     print(f"[quokka] exit {code}, {time.monotonic() - start:.1f} s of GPU time in the command")
     return code
 
 
 @app.local_entrypoint()
-def main(cmd: str = "nvidia-smi"):
-    code = run.remote(cmd)
+def main(cmd: str = "nvidia-smi", build: bool = True):
+    prebuilt = compile_cuda.remote() if build else None
+    code = run.remote(cmd, prebuilt)
     if code:  # exit only on failure: SystemExit(0) makes Modal log a spurious exception
         sys.exit(code)
