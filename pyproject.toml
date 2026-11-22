@@ -21,6 +21,8 @@ dev = [
     "ruff>=0.17.4",
     # Independent FP4/FP8 casts, used as the oracle in tests.
     "ml_dtypes>=0.5",
+    # Client for renting GPUs by the second (scripts/modal_b200.py).
+    "modal>=1.6",
 ]
 
 [tool.pytest.ini_options]
