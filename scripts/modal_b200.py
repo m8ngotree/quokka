@@ -64,4 +64,6 @@ def run(cmd: str) -> int:
 
 @app.local_entrypoint()
 def main(cmd: str = "nvidia-smi"):
-    sys.exit(run.remote(cmd))
+    code = run.remote(cmd)
+    if code:  # exit only on failure: SystemExit(0) makes Modal log a spurious exception
+        sys.exit(code)
