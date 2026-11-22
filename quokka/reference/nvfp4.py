@@ -12,6 +12,14 @@ A value decodes as  element * block_scale * outer_scale.
   weights, or one per tensor. A per-row scale makes each row's encoding
   independent of the rest of the batch.
 
+Four Over Six (`four_over_six=True`) tries two block scales: one that maps the
+block maximum to 6, and one that maps it to 4. E2M1 has no value between 4
+and 6, so values at 70-90% of the block maximum round badly with the first;
+the second gives up the top of the grid for finer steps underneath. Each
+block keeps whichever reconstructs it with less squared error. The outer
+scale is then sized so that the larger of the two candidate scales still
+fits in E4M3.
+
 Elements are rounded to nearest-even, which the forward pass uses.
 """
 
@@ -40,7 +48,6 @@ class NVFP4:
 
 
 def _quantize_with_target(x_blocks, amax_blocks, outer, target):
-    """Scale each block so its largest magnitude lands on `target`, then round."""
     raw = amax_blocks / (target * outer)
     block_scale = round_to_grid(raw, E4M3)
     denom = (block_scale * outer).unsqueeze(-1)
@@ -53,6 +60,7 @@ def quantize_nvfp4(
     x: torch.Tensor,
     *,
     outer_dims: tuple[int, ...] = (-1,),
+    four_over_six: bool = False,
 ) -> NVFP4:
     """Quantize `x` along its last axis.
 
@@ -64,11 +72,20 @@ def quantize_nvfp4(
     if k % BLOCK:
         raise ValueError(f"last axis {k} is not a multiple of {BLOCK}")
 
-    # Size the outer scale so the largest block scale is exactly E4M3's max.
+    top = 4.0 if four_over_six else 6.0
     amax_outer = x.abs().amax(dim=outer_dims, keepdim=True)
-    outer = torch.where(amax_outer > 0, amax_outer / (6.0 * E4M3.max_val), 1.0)
+    outer = torch.where(amax_outer > 0, amax_outer / (top * E4M3.max_val), 1.0)
 
     xb = x.reshape(*lead, k // BLOCK, BLOCK)
     amax_b = xb.abs().amax(-1)
-    elements, block_scale = _quantize_with_target(xb, amax_b, outer, 6.0)
+    el6, bs6 = _quantize_with_target(xb, amax_b, outer, 6.0)
+    if not four_over_six:
+        return NVFP4(el6.reshape(x.shape), bs6, outer)
+
+    el4, bs4 = _quantize_with_target(xb, amax_b, outer, 4.0)
+    err6 = ((el6 * (bs6 * outer).unsqueeze(-1) - xb) ** 2).sum(-1)
+    err4 = ((el4 * (bs4 * outer).unsqueeze(-1) - xb) ** 2).sum(-1)
+    use4 = err4 < err6
+    elements = torch.where(use4.unsqueeze(-1), el4, el6)
+    block_scale = torch.where(use4, bs4, bs6)
     return NVFP4(elements.reshape(x.shape), block_scale, outer)

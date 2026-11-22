@@ -15,16 +15,18 @@ def _on_grid(t, dtype):
     return np.array_equal(a.astype(dtype).astype(np.float32), a)
 
 
-def test_fields_are_representable():
-    q = quantize_nvfp4(_randn(8, 256) * 30)
+@pytest.mark.parametrize("fos", [False, True])
+def test_fields_are_representable(fos):
+    q = quantize_nvfp4(_randn(8, 256) * 30, four_over_six=fos)
     assert _on_grid(q.elements, ml_dtypes.float4_e2m1fn)
     assert _on_grid(q.block_scale, ml_dtypes.float8_e4m3fn)
     assert (q.block_scale <= 448).all()
 
 
-def test_error_is_bounded_per_block():
+@pytest.mark.parametrize("fos", [False, True])
+def test_error_is_bounded_per_block(fos):
     x = _randn(16, 512) * torch.logspace(-3, 3, 16).unsqueeze(1)
-    q = quantize_nvfp4(x)
+    q = quantize_nvfp4(x, four_over_six=fos)
     err = (q.dequantize() - x).abs().reshape(16, -1, BLOCK).amax(-1)
     step = q.block_scale * q.outer_scale  # one E2M1 unit in real terms
     amax_b = x.abs().reshape(16, -1, BLOCK).amax(-1)
@@ -41,21 +43,32 @@ def test_relative_error_on_gaussian():
     assert rel < 0.015
 
 
+def test_four_over_six_lowers_error():
+    x = _randn(64, 1024, seed=3)
+    mse = {
+        fos: ((quantize_nvfp4(x, four_over_six=fos).dequantize() - x) ** 2).mean()
+        for fos in (False, True)
+    }
+    assert mse[True] < mse[False]
+
+
 def test_zero_rows_and_blocks_stay_zero():
     x = _randn(4, 64)
     x[1] = 0
     x[2, :BLOCK] = 0
-    dq = quantize_nvfp4(x).dequantize()
-    assert torch.isfinite(dq).all()
-    assert (dq[1] == 0).all() and (dq[2, :BLOCK] == 0).all()
+    for fos in (False, True):
+        dq = quantize_nvfp4(x, four_over_six=fos).dequantize()
+        assert torch.isfinite(dq).all()
+        assert (dq[1] == 0).all() and (dq[2, :BLOCK] == 0).all()
 
 
-def test_per_row_outer_scale_is_batch_invariant():
+@pytest.mark.parametrize("fos", [False, True])
+def test_per_row_outer_scale_is_batch_invariant(fos):
     x = _randn(32, 128)
     x[7] *= 1000  # an outlier row must not change the other rows
-    full = quantize_nvfp4(x).dequantize()
+    full = quantize_nvfp4(x, four_over_six=fos).dequantize()
     for i in (0, 7, 31):
-        alone = quantize_nvfp4(x[i : i + 1]).dequantize()
+        alone = quantize_nvfp4(x[i : i + 1], four_over_six=fos).dequantize()
         assert torch.equal(full[i : i + 1], alone)
 
 
