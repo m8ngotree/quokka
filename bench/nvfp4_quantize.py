@@ -17,7 +17,22 @@ import torch
 
 from quokka.cuda import nvfp4_quantize
 
-SHAPES = [(128, 7168), (1024, 7168), (4096, 7168), (16384, 7168), (65536, 4096)]
+# Activation shapes from a public 4-bit MoE model's config (hidden 4608,
+# expert FFN 2304, 8 experts per token). M is tokens on one GPU, which the
+# model's authors don't publish, so it sweeps from RL-decode sizes (128) to
+# large pretraining microbatches.
+#   K = 4608: tokens entering the experts (dispatch, first expert GEMM)
+#   K = 2304: expert hidden states entering the second expert GEMM; each
+#             token visits 8 experts, so M is 8x the token count
+SHAPES = [
+    (128, 4608),
+    (1024, 4608),
+    (8192, 4608),
+    (32768, 4608),
+    (1024, 2304),
+    (65536, 2304),
+    (262144, 2304),
+]
 ROTATE_BYTES = 512 << 20
 
 
