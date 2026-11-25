@@ -63,3 +63,15 @@ before and after).
 | 1024 | 2304 | 5.1 | 1181 | 59% | 0.96x |
 | 65536 | 2304 | 77.9 | 4969 | 76% | 1.47x |
 | 262144 | 2304 | 301.6 | 5135 | 76% | 1.49x |
+
+### Tried and reverted: block max on packed bf16 pairs
+
+Nsight Compute on v2 (32768 x 4608): DRAM 64% busy, SM compute 68%, no
+register spills, 85% achieved occupancy, and the FP4 conversion is the
+hardware `F2FP.SATFINITE.E2M1` instruction. So it's limited by instruction
+count about as much as by memory.
+
+Computing |x| and the block max on bf16 pairs (`__habs2`, `__hmax2`) instead
+of converting all 16 values to fp32 first is exact and removes instructions,
+but measured no faster (81% vs 82% of copy at 32768 x 4608). Those
+instructions weren't on the critical path, so the change was reverted.
