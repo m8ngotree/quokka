@@ -1,33 +1,27 @@
-# NVFP4 quantize on B200: v0
+# NVFP4 quantize on B200
 
-Kernel: `quokka/cuda/csrc/nvfp4_quantize.cu` at v0 (one thread block per row,
-two passes, IEEE division per element). Bit-exact with `quokka/reference/nvfp4.py`.
+Kernel: `quokka/cuda/csrc/nvfp4_quantize.cu`, bit-exact with
+`quokka/reference/nvfp4.py` at every version. Benchmark: `bench/nvfp4_quantize.py`.
 
-"copy GB/s" is a bf16 `torch.clone` of the same input timed the same way: the
-bandwidth this GPU actually reaches. Inputs rotate through 512 MB so L2 can't
-serve repeat reads.
+"% of copy" is achieved bandwidth divided by a bf16 `torch.clone` of the same
+input timed the same way, which is what this GPU actually reaches (about
+6.5 TB/s at large M, against 8 TB/s on paper). Inputs rotate through 512 MB
+so L2 can't serve repeat reads. Shapes are the activations of a 4-bit MoE
+model: K = 4608 (hidden size) and K = 2304 (expert FFN size).
 
-| M | K | quantize (us) | GB/s | copy GB/s | % of copy |
-|---:|---:|---:|---:|---:|---:|
-| 128 | 7168 | 9.2 | 256 | 548 | 47% |
-| 1024 | 7168 | 9.5 | 1981 | 4490 | 44% |
-| 4096 | 7168 | 25.1 | 2999 | 6845 | 44% |
-| 16384 | 7168 | 87.5 | 3439 | 6518 | 53% |
-| 65536 | 4096 | 219.9 | 3130 | 6677 | 47% |
+Measured on Modal: NVIDIA B200, driver 620.70, CUDA 13.5, torch 2.15.
 
-Measured 2026-11-22 on Modal (NVIDIA B200, driver 620.70, CUDA 13.5, torch 2.15).
+## v0: one thread block of 256 threads per row, two passes
 
-## Why roughly half
+| M | K | us | GB/s | % of copy |
+|---:|---:|---:|---:|---:|
+| 128 | 4608 | 10.9 | 139 | 43% |
+| 1024 | 4608 | 9.8 | 1234 | 51% |
+| 8192 | 4608 | 35.7 | 2708 | 42% |
+| 32768 | 4608 | 129.8 | 2981 | 45% |
+| 1024 | 2304 | 9.7 | 625 | 49% |
+| 65536 | 2304 | 173.5 | 2232 | 34% |
+| 262144 | 2304 | 683.0 | 2268 | 34% |
 
-Likely causes, to test one at a time:
-
-- **Per-element IEEE division.** `x / denom` costs a multi-instruction
-  division for every value; one reciprocal per block plus multiplies would
-  be far cheaper. The reference would have to adopt the same rounding to stay
-  bit-exact.
-- **Two passes over each row.** Pass 2 re-reads the row (from L1/L2, but
-  still extra load latency) after a block-wide barrier.
-- **Little memory parallelism per thread.** With K = 7168 there are 448
-  blocks per row for 256 threads: under two 32-byte loads in flight each.
-- **Small M is latency-bound.** At M = 128 there are only 128 thread blocks
-  for 148 SMs; the copy is also slow there (548 GB/s).
+K = 2304 is worst: a row has 144 blocks of 16 values but gets 256 threads,
+so 112 threads per row do nothing.
