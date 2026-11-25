@@ -37,13 +37,27 @@ ROTATE_BYTES = 512 << 20
 
 
 def _time_ms(fn, inputs, iters=50):
-    for x in inputs[:3]:
-        fn(x)
+    """Mean GPU time per call, with launch overhead taken out.
+
+    The calls are captured once into a CUDA graph and replayed, so the GPU
+    runs them back to back. Without this, a kernel shorter than the CPU's
+    ~5 us launch cost measures the launch, not the kernel.
+    """
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for x in inputs[:3]:
+            fn(x)  # warm up (and load the module) outside the capture
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        for i in range(iters):
+            fn(inputs[i % len(inputs)])
+    graph.replay()  # warm-up replay
     torch.cuda.synchronize()
     start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     start.record()
-    for i in range(iters):
-        fn(inputs[i % len(inputs)])
+    graph.replay()
     end.record()
     torch.cuda.synchronize()
     return start.elapsed_time(end) / iters

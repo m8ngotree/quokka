@@ -75,3 +75,24 @@ Computing |x| and the block max on bf16 pairs (`__habs2`, `__hmax2`) instead
 of converting all 16 values to fp32 first is exact and removes instructions,
 but measured no faster (81% vs 82% of copy at 32768 x 4608). Those
 instructions weren't on the critical path, so the change was reverted.
+
+## v2 re-measured with CUDA graphs
+
+The tables above time 50 back-to-back launches with events. A launch costs
+the CPU about 5 us, longer than the kernel itself at small M, so those rows
+partly measured launch overhead, and the copy baseline swung 2x between
+runs (620 vs 310 GB/s at M = 128). The benchmark now captures the 50 calls
+into a CUDA graph and replays it, so the GPU runs them back to back. Two
+runs below agree to within 3%.
+
+| M | K | us | GB/s | % of copy |
+|---:|---:|---:|---:|---:|
+| 128 | 4608 | 2.1 | 714 | 70% |
+| 1024 | 4608 | 4.3 | 2832 | 76% |
+| 8192 | 4608 | 19.9 | 4855 | 77% |
+| 32768 | 4608 | 71.3 | 5430 | 83% |
+| 1024 | 2304 | 3.6 | 1698 | 75% |
+| 65536 | 2304 | 77.0 | 5030 | 77% |
+| 262144 | 2304 | 298.8 | 5183 | 77% |
+
+From here on, compare against this table.
