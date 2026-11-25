@@ -51,8 +51,11 @@ def _quantize_with_target(x_blocks, amax_blocks, outer, target):
     raw = amax_blocks / (target * outer)
     block_scale = round_to_grid(raw, E4M3)
     denom = (block_scale * outer).unsqueeze(-1)
-    safe = torch.where(denom > 0, denom, torch.ones_like(denom))
-    elements = torch.where(denom > 0, round_to_grid(x_blocks / safe, E2M1), 0.0)
+    # One reciprocal per block, then a multiply per element: what a fast
+    # kernel does instead of 16 divisions, written the same way here so the
+    # kernel can match bit for bit.
+    inv = 1.0 / torch.where(denom > 0, denom, torch.ones_like(denom))
+    elements = torch.where(denom > 0, round_to_grid(x_blocks * inv, E2M1), 0.0)
     return elements, block_scale
 
 

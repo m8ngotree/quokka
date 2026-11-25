@@ -7,7 +7,7 @@
 //
 //   outer       = row_amax / (6 * 448)           (1 if the row is all zero)
 //   block_scale = e4m3(block_amax / (6 * outer))
-//   element     = e2m1(x / (block_scale * outer)) (0 if that product is 0)
+//   element     = e2m1(x * (1 / (block_scale * outer)))  (0 if that product is 0)
 //
 // One thread block per row, one thread per 16-value block (ITEMS blocks per
 // thread when a row has more than 1024 of them). Each thread:
@@ -106,9 +106,10 @@ nvfp4_quantize_kernel(const __nv_bfloat16* __restrict__ x, uint8_t* __restrict__
 
     uint64_t out = 0;
     if (denom > 0.0f) {
+      const float inv = 1.0f / denom;  // one IEEE division per block, not 16
 #pragma unroll
       for (int i = 0; i < kBlock; i += 2) {
-        const float2 pair = make_float2(v[j][i] / denom, v[j][i + 1] / denom);
+        const float2 pair = make_float2(v[j][i] * inv, v[j][i + 1] * inv);
         const __nv_fp4x2_storage_t two = __nv_cvt_float2_to_fp4x2(pair, __NV_E2M1, cudaRoundNearest);
         out |= static_cast<uint64_t>(two) << (4 * i);
       }

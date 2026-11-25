@@ -44,3 +44,22 @@ at K = 2304), so no thread idles and the row is read once.
 
 Still about half of copy bandwidth at large M, so the remaining limit isn't
 idle threads or the second read. Next suspect: 16 IEEE divisions per block.
+
+## v2: one reciprocal per block instead of 16 divisions
+
+An IEEE fp32 division is a multi-instruction sequence. At 16 per block the
+divisions cost more time than moving the data, so the kernel was limited by
+arithmetic, not memory. Now each block computes `1 / denom` once and
+multiplies. The reference does the same, so the two stay bit-exact.
+Reconstruction error is unchanged (relative MSE 0.00907 on Gaussian rows,
+before and after).
+
+| M | K | us | GB/s | % of copy | vs v1 |
+|---:|---:|---:|---:|---:|---:|
+| 128 | 4608 | 4.9 | 307 | 49% | 1.04x |
+| 1024 | 4608 | 4.9 | 2446 | 56% | 1.3x |
+| 8192 | 4608 | 20.4 | 4736 | 73% | 1.4x |
+| 32768 | 4608 | 72.1 | 5366 | 82% | 1.44x |
+| 1024 | 2304 | 5.1 | 1181 | 59% | 0.96x |
+| 65536 | 2304 | 77.9 | 4969 | 76% | 1.47x |
+| 262144 | 2304 | 301.6 | 5135 | 76% | 1.49x |
