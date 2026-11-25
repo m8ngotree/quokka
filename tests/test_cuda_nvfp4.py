@@ -18,7 +18,20 @@ def _check(x: torch.Tensor):
     assert torch.equal(unpack_e2m1(packed).cpu(), ref.elements)
 
 
-@pytest.mark.parametrize("m,k", [(1, 16), (7, 64), (128, 4096), (33, 7168), (3, 16 * 300)])
+# Covers 1, 2, 4 and 8 blocks per thread, partial warps and partial last items.
+@pytest.mark.parametrize(
+    "m,k",
+    [
+        (1, 16),
+        (7, 64),
+        (128, 4608),
+        (33, 2304),
+        (3, 16 * 300),
+        (5, 16 * 1500),
+        (2, 16 * 4097),
+        (2, 16 * 8000),
+    ],
+)
 def test_matches_reference(m, k):
     gen = torch.Generator().manual_seed(m * 10007 + k)
     x = torch.randn(m, k, generator=gen) * torch.logspace(-4, 4, m).unsqueeze(1)

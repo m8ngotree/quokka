@@ -25,3 +25,22 @@ Measured on Modal: NVIDIA B200, driver 620.70, CUDA 13.5, torch 2.15.
 
 K = 2304 is worst: a row has 144 blocks of 16 values but gets 256 threads,
 so 112 threads per row do nothing.
+
+## v1: one thread per 16-value block, row held in registers
+
+Each thread loads its 32 bytes once, joins the row max, and quantizes from
+registers. The thread block is sized to the row (288 threads at K = 4608, 144
+at K = 2304), so no thread idles and the row is read once.
+
+| M | K | us | GB/s | % of copy | vs v0 |
+|---:|---:|---:|---:|---:|---:|
+| 128 | 4608 | 5.1 | 297 | 48% | 2.1x |
+| 1024 | 4608 | 6.5 | 1861 | 43% | 1.5x |
+| 8192 | 4608 | 28.6 | 3383 | 52% | 1.25x |
+| 32768 | 4608 | 103.8 | 3728 | 57% | 1.25x |
+| 1024 | 2304 | 4.9 | 1245 | 51% | 2.0x |
+| 65536 | 2304 | 114.8 | 3373 | 51% | 1.5x |
+| 262144 | 2304 | 448.9 | 3450 | 51% | 1.5x |
+
+Still about half of copy bandwidth at large M, so the remaining limit isn't
+idle threads or the second read. Next suspect: 16 IEEE divisions per block.
