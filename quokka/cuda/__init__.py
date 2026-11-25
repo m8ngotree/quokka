@@ -9,6 +9,7 @@ compiled on first use with torch's JIT builder.
 from __future__ import annotations
 
 import functools
+import hashlib
 import importlib.util
 import os
 import pathlib
@@ -22,11 +23,29 @@ SOURCES = sorted(str(p) for p in CSRC.glob("*.c*"))
 CUDA_FLAGS = ["-O3", "--expt-relaxed-constexpr"]
 
 
+def _content_hash() -> str:
+    """Hash of everything that affects the build: sources, flags, torch version."""
+    h = hashlib.sha256()
+    for path in SOURCES:
+        h.update(pathlib.Path(path).name.encode())
+        h.update(pathlib.Path(path).read_bytes())
+    h.update(repr((CUDA_FLAGS, torch.__version__, os.environ.get("TORCH_CUDA_ARCH_LIST"))).encode())
+    return h.hexdigest()[:16]
+
+
 def build(build_dir: str | None = None):
-    """Compile (or reuse) the extension. Needs nvcc, not a GPU."""
+    """Compile (or reuse) the extension. Needs nvcc, not a GPU.
+
+    A persistent build_dir is keyed by a hash of the sources. ninja decides
+    what to rebuild from file timestamps, and files mounted into a container
+    don't reliably carry them, so an edited kernel could otherwise be skipped
+    and a stale .so loaded. With the hash, any edit builds in a fresh
+    directory; unchanged sources reuse theirs.
+    """
     from torch.utils.cpp_extension import load
 
     if build_dir:
+        build_dir = os.path.join(build_dir, _content_hash())
         os.makedirs(build_dir, exist_ok=True)
     return load(
         name=NAME,
