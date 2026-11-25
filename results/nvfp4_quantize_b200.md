@@ -96,3 +96,18 @@ runs below agree to within 3%.
 | 262144 | 2304 | 298.8 | 5183 | 77% |
 
 From here on, compare against this table.
+
+### Tried and reverted: two 16-value blocks per thread
+
+Halving the threads per row, so each thread pays the row reduction once per
+32 values instead of 16, made every large shape slower: 60-67% of copy
+against 77-83%. Fewer warps per SM means less memory latency hidden; the
+reduction overhead it saved was not the limit.
+
+## Where v2 stands
+
+77-83% of copy bandwidth at training sizes (5.0-5.4 TB/s), 70-76% at small
+M. The remaining gap is likely structural: each thread block must finish all
+its loads before the row max exists, so its stores wait behind a barrier,
+while a copy streams loads and stores continuously. The next step is
+asynchronous bulk loads (TMA) that keep memory busy across that barrier.
