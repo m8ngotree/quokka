@@ -1,0 +1,20 @@
+
+Fatbin elf code:
+================
+arch = sm_100a
+code version = [1,8]
+host = linux
+compile_size = 64bit
+identifier = /root/quokka/quokka/cuda/csrc/nvfp4_quantize.cu
+
+Resource usage:
+ Common:
+  GLOBAL:144 CONSTANT[4]:424
+ Function _ZN50_GLOBAL__N__5467e493_17_nvfp4_quantize_cu_187fcff121nvfp4_quantize_kernelILi8EEEvPK13__nv_bfloat16PhP13__nv_fp8_e4m3Pfi:
+  REG:32 STACK:480 SHARED:1152 LOCAL:0 CONSTANT[0]:932 TEXTURE:0 SURFACE:0 SAMPLER:0
+ Function _ZN50_GLOBAL__N__5467e493_17_nvfp4_quantize_cu_187fcff121nvfp4_quantize_kernelILi4EEEvPK13__nv_bfloat16PhP13__nv_fp8_e4m3Pfi:
+  REG:64 STACK:64 SHARED:1152 LOCAL:0 CONSTANT[0]:932 TEXTURE:0 SURFACE:0 SAMPLER:0
+ Function _ZN50_GLOBAL__N__5467e493_17_nvfp4_quantize_cu_187fcff121nvfp4_quantize_kernelILi2EEEvPK13__nv_bfloat16PhP13__nv_fp8_e4m3Pfi:
+  REG:49 STACK:0 SHARED:1152 LOCAL:0 CONSTANT[0]:932 TEXTURE:0 SURFACE:0 SAMPLER:0
+ Function _ZN50_GLOBAL__N__5467e493_17_nvfp4_quantize_cu_187fcff121nvfp4_quantize_kernelILi1EEEvPK13__nv_bfloat16PhP13__nv_fp8_e4m3Pfi:
+  REG:32 STACK:0 SHARED:1152 LOCAL:0 CONSTANT[0]:932 TEXTURE:0 SURFACE:0 SAMPLER:0
