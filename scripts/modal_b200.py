@@ -2,6 +2,7 @@
 
     modal run scripts/modal_b200.py --cmd "nvidia-smi"
     modal run scripts/modal_b200.py --cmd "pytest -q tests"
+    modal run scripts/modal_b200.py --cpu --cmd "python scripts/dump_asm.py"
 
 Modal bills GPUs per second, so the setup avoids paying for idle time:
 
@@ -17,6 +18,10 @@ Modal bills GPUs per second, so the setup avoids paying for idle time:
   fraction of a GPU second. The built extension goes into a Modal Volume and
   the B200 imports it directly, so nvcc never runs on GPU time. Pass
   `--no-build` to skip compiling for commands that don't need the kernels.
+- `--cpu` runs the command on the CPU build container instead of the B200,
+  for work that needs the toolkit but not a GPU (reading SASS and PTX).
+- Files a command writes under /build land in the `quokka-build` volume;
+  fetch them with `modal volume get quokka-build <path> <local dir>`.
 - The container scales down 2 s after going idle, `max_containers=1` stops
   accidental fan-out, and a 30-minute timeout caps a runaway job.
 
@@ -74,6 +79,16 @@ def compile_cuda() -> str:
     return module.__file__
 
 
+@app.function(cpu=8, memory=16 * 1024, timeout=20 * 60, volumes={BUILD: build_volume})
+def run_cpu(cmd: str, prebuilt: str) -> int:
+    """Run a command next to the built extension, with no GPU attached."""
+    code = subprocess.run(
+        cmd, shell=True, cwd=REMOTE, env=dict(os.environ, QUOKKA_PREBUILT=prebuilt)
+    ).returncode
+    build_volume.commit()
+    return code
+
+
 @app.function(
     gpu="B200",
     timeout=30 * 60,
@@ -86,12 +101,13 @@ def run(cmd: str, prebuilt: str | None = None) -> int:
     start = time.monotonic()
     code = subprocess.run(cmd, shell=True, cwd=REMOTE, env=env).returncode
     print(f"[quokka] exit {code}, {time.monotonic() - start:.1f} s of GPU time in the command")
+    build_volume.commit()  # keep anything the command wrote under /build (e.g. profiles)
     return code
 
 
 @app.local_entrypoint()
-def main(cmd: str = "nvidia-smi", build: bool = True):
+def main(cmd: str = "nvidia-smi", build: bool = True, cpu: bool = False):
     prebuilt = compile_cuda.remote() if build else None
-    code = run.remote(cmd, prebuilt)
+    code = run_cpu.remote(cmd, prebuilt) if cpu else run.remote(cmd, prebuilt)
     if code:  # exit only on failure: SystemExit(0) makes Modal log a spurious exception
         sys.exit(code)
