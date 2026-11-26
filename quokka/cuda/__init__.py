@@ -20,7 +20,9 @@ CSRC = pathlib.Path(__file__).parent / "csrc"
 NAME = "quokka_cuda"
 SOURCES = sorted(str(p) for p in CSRC.glob("*.c*"))
 # torch adds -std=c++20 itself (its headers require it), so no -std here.
-CUDA_FLAGS = ["-O3", "--expt-relaxed-constexpr"]
+# -lineinfo records which source line each SASS instruction came from, so
+# Nsight Compute can show per-line stalls. It changes no generated code.
+CUDA_FLAGS = ["-O3", "--expt-relaxed-constexpr", "-lineinfo"]
 
 
 def _content_hash() -> str:
