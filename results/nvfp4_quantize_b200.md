@@ -193,3 +193,61 @@ touched once, so there's nothing to keep in cache.
 
 A small, real gain where the working set is mid-sized (spread is about 1%),
 and nothing slower. Kept.
+
+## The ceiling for this traffic
+
+`traffic_ceiling` reads and writes exactly what the quantizer does (same
+layout, same streaming hints) and computes nothing. "% of ceiling" is the
+quantizer's bandwidth over that kernel's. v2.1:
+
+| M | K | us | % of copy | % of ceiling |
+|---:|---:|---:|---:|---:|
+| 128 | 4608 | 2.32 | 81% | 83% |
+| 1024 | 4608 | 4.48 | 73% | 77% |
+| 8192 | 4608 | 19.62 | 79% | 68% |
+| 32768 | 4608 | 71.17 | 83% | 83% |
+| 1024 | 2304 | 3.29 | 81% | 83% |
+| 65536 | 2304 | 77.00 | 77% | 77% |
+| 262144 | 2304 | 301.53 | 76% | 76% |
+
+The ceiling runs at about copy speed, so the mix of 2 bytes read to 0.56
+written isn't what holds the quantizer back: there is ~1.2-1.3x of real
+headroom at training sizes. (M = 1024 x 4608 measured 4.26-4.48 us across
+separate runs; between-container variation at small shapes is larger than
+the within-run spread column.)
+
+### Tried and reverted: persistent blocks
+
+The hypothesis: each thread block loads its row, then waits through two
+barriers and the math before memory gets more work, so persistent blocks
+that fetch the next row early should keep HBM busier.
+
+| variant | 128x4608 | 1024x4608 | 8192x4608 | 32768x4608 | 1024x2304 | 65536x2304 | 262144x2304 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| v2.1 (reference) | 2.32 | 4.26 | 19.57 | 71.24 | 3.28 | 76.99 | 300.13 |
+| next row prefetched into registers | 2.35 | 4.40 | 20.55 | 73.89 | 3.32 | 82.51 | 320.67 |
+| TMA ring of 3 rows in shared memory | 2.46 | 4.89 | 21.14 | 73.86 | 3.71 | 83.65 | 323.82 |
+| same, 32 registers, max shared carveout | 2.47 | 4.81 | 20.53 | 72.21 | 3.71 | 79.42 | 307.78 |
+| v2.1 with a one-barrier block max | 2.25 | 4.26 | 19.95 | 72.48 | 3.23 | 78.78 | 307.29 |
+
+(microseconds; lower is better)
+
+- **Register prefetch**: 48 registers per thread instead of 32, so 4 blocks
+  fit per SM instead of 7, and fewer rows are in flight than before.
+- **TMA ring** (`cp.async.bulk` into 3 shared-memory row buffers, one
+  mbarrier each; code in `experiments/nvfp4_tma_pipelined.cu`): load stalls
+  nearly vanished (long-scoreboard 27% -> 4% of samples), so the pipeline
+  works, but 37 registers and a 168 KB carveout left 5 blocks per SM.
+  Capping registers at 32 (`__launch_bounds__(1024, 2)`) and asking for the
+  full carveout restores 7: then it ties v2.1 at the largest shape and loses
+  elsewhere (the single-thread bulk issue and mbarrier waits add latency
+  at small M).
+- **One barrier per block max** (every warp finishes the reduction itself):
+  2-3% faster at small M, 1-2% slower at large M, where the extra
+  instructions cost more than the barrier.
+
+Why none of it wins: at 32768 x 4608 v2 issues 56.85 M warp-instructions,
+which is 96 K per scheduler, about 50 us at one per cycle. The kernel takes
+71 us, and its traffic at the ceiling would take about 59 us. Overlapping
+memory doesn't help once instruction issue alone is most of the runtime.
+The lever now is fewer instructions per value, not more bytes in flight.
