@@ -280,3 +280,39 @@ registers and 5 with 37. A `__byte_perm` tree in C++ hit the same cliff
 
 The cap costs a 24-byte stack frame (cuobjdump: STACK:24) but no measured
 time. 262144 x 2304 had a noisy run (6.7% spread); its median is unchanged.
+
+### Tried and reverted: paired fp32 multiplies
+
+sm_100 has two-lane fp32 ops (`mul.rn.f32x2`, SASS `FMUL2`), each lane
+rounded exactly like a scalar multiply, so the 16 `x * inv` per block
+become 8. Executed instructions 54.49 M -> 52.13 M (-4.3%), 32 registers.
+
+| M | K | us | vs v2.2 |
+|---:|---:|---:|---:|
+| 128 | 4608 | 2.34 | 1.0x |
+| 1024 | 4608 | 4.37 | 1.0x |
+| 8192 | 4608 | 19.34 | 0.99x |
+| 32768 | 4608 | 70.13 | 0.99x |
+| 1024 | 2304 | 3.26 | 1.0x |
+| 65536 | 2304 | 75.54 | 0.99x |
+| 262144 | 2304 | 294.16 | 1.03x |
+
+Within noise. Fewer instructions stopped buying time: at 85% of the
+ceiling, issue is no longer the only limit. Reverted to keep the inline
+PTX to the one place it pays.
+
+## Where v2.2 stands
+
+85% of the traffic ceiling at 32768 x 4608, 76-85% at training sizes,
+79-84% at small M. What was tried and what it showed:
+
+- Memory-side changes (coalesced 32-byte loads, prefetching the next row,
+  a TMA pipeline) don't help: DRAM already reads each byte once, and the
+  pipeline's hidden load latency was replaced by issue and barrier time.
+- Instruction-count changes help only while issue dominates, and only if
+  they stay within 32 registers (the occupancy cliff at 288 threads).
+- Small M (128-1024 rows, 2-4 us) is a latency problem: one wave of blocks
+  that each do a load, a reduction and a store. Programmatic dependent
+  launch, which lets a kernel's prologue overlap the previous kernel's
+  tail, is the next thing to try there; so is fusing the quantizer into
+  the kernel that produces its input.
