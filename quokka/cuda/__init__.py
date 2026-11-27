@@ -83,3 +83,8 @@ def unpack_e2m1(packed: torch.Tensor) -> torch.Tensor:
 def nvfp4_quantize(x: torch.Tensor):
     """bf16 [M, K] -> (packed uint8 [M, K/2], e4m3 scales [M, K/16], fp32 outer [M, 1])."""
     return ext().nvfp4_quantize(x)
+
+
+def traffic_ceiling(x: torch.Tensor):
+    """The NVFP4 quantizer's reads and writes with no math: a roofline for benchmarks."""
+    return ext().traffic_ceiling(x)

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import torch
 
-from quokka.cuda import nvfp4_quantize
+from quokka.cuda import nvfp4_quantize, traffic_ceiling
 
 # Activation shapes from a public 4-bit MoE model's config (hidden 4608,
 # expert FFN 2304, 8 experts per token). M is tokens on one GPU, which the
@@ -82,17 +82,19 @@ def main():
         moved = m * k * (2 + 0.5 + 1 / 16) + m * 4  # read bf16, write fp4 + scales + outer
         t_q, spread = _time_ms(nvfp4_quantize, inputs)
         t_copy, _ = _time_ms(torch.clone, inputs)
+        t_ceil, _ = _time_ms(traffic_ceiling, inputs)
         copy_bw = 2 * size / t_copy / 1e6  # clone reads and writes
         q_bw = moved / t_q / 1e6
-        rows.append((m, k, t_q * 1e3, q_bw, copy_bw, q_bw / copy_bw, spread))
+        ceil_bw = (moved - m * 4) / t_ceil / 1e6  # same traffic minus the outer scales
+        rows.append((m, k, t_q * 1e3, q_bw, copy_bw, q_bw / copy_bw, q_bw / ceil_bw, spread))
         del inputs
 
-    print("\n| M | K | quantize (us) | GB/s | copy GB/s | % of copy | spread |")
-    print("|---:|---:|---:|---:|---:|---:|---:|")
-    for m, k, us, bw, cbw, frac, spread in rows:
+    print("\n| M | K | quantize (us) | GB/s | copy GB/s | % of copy | % of ceiling | spread |")
+    print("|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for m, k, us, bw, cbw, frac, cfrac, spread in rows:
         print(
             f"| {m} | {k} | {us:.2f} | {bw:.0f} | {cbw:.0f} | {100 * frac:.0f}% "
-            f"| {100 * spread:.1f}% |"
+            f"| {100 * cfrac:.0f}% | {100 * spread:.1f}% |"
         )
 
 
