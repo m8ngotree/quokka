@@ -251,3 +251,32 @@ which is 96 K per scheduler, about 50 us at one per cycle. The kernel takes
 71 us, and its traffic at the ceiling would take about 59 us. Overlapping
 memory doesn't help once instruction issue alone is most of the runtime.
 The lever now is fewer instructions per value, not more bytes in flight.
+
+## v2.2: fewer instructions, at 32 registers
+
+Since instruction issue is now most of the runtime, cut instructions. The
+FP4 packing was the most wasteful sequence: each converted byte came back
+to C++ as a `uint8` and was masked, shifted and OR-ed into place (~15
+integer instructions per block). Writing the conversions in PTX and
+assembling the word with `mov.b32 {b0, b1, b2, b3}` lets ptxas chain them
+through `F2FP`'s merge operand. Executed instructions at 32768 x 4608:
+57.74 M -> 54.49 M (-5.6%).
+
+That alone was slower (83.7 us at 32768 x 4608), because registers went
+from 32 to 37: at 288 threads per block, 7 blocks fit per SM with 32
+registers and 5 with 37. A `__byte_perm` tree in C++ hit the same cliff
+(37 registers, 86.9 us) while saving only one instruction. With
+`__launch_bounds__(1024, 2)` the one-item kernel is held to 32 registers:
+
+| M | K | us | GB/s | % of copy | % of ceiling | vs v2.1 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 128 | 4608 | 2.33 | 649 | 81% | 83% | 1.0x |
+| 1024 | 4608 | 4.36 | 2772 | 75% | 79% | 1.0x |
+| 8192 | 4608 | 19.20 | 5040 | 81% | 69% | 1.02x |
+| 32768 | 4608 | 69.53 | 5566 | 85% | 85% | 1.02x |
+| 1024 | 2304 | 3.25 | 1859 | 81% | 84% | 1.0x |
+| 65536 | 2304 | 74.96 | 5165 | 79% | 79% | 1.03x |
+| 262144 | 2304 | 302.18 | 5125 | 76% | 76% | 1.0x |
+
+The cap costs a 24-byte stack frame (cuobjdump: STACK:24) but no measured
+time. 262144 x 2304 had a noisy run (6.7% spread); its median is unchanged.
