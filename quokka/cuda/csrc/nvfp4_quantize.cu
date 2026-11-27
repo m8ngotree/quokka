@@ -70,22 +70,41 @@ __device__ __forceinline__ float block_max(float v) {
   return warp_max[0];
 }
 
+// 8 floats -> 8 E2M1 codes in one 32-bit word, element i in nibble i.
+// Written in PTX so the four converted bytes go straight into one register
+// (mov.b32 from four .b8): in C++ each byte comes back as a uint8 and gets
+// masked and shifted into place.
+__device__ __forceinline__ uint32_t e2m1x8(const float a[8]) {
+  uint32_t w;
+  // cvt.e2m1x2 d, hi, lo puts `lo` in the low nibble.
+  asm("{\n"
+      "  .reg .b8 b0, b1, b2, b3;\n"
+      "  cvt.rn.satfinite.e2m1x2.f32 b0, %2, %1;\n"
+      "  cvt.rn.satfinite.e2m1x2.f32 b1, %4, %3;\n"
+      "  cvt.rn.satfinite.e2m1x2.f32 b2, %6, %5;\n"
+      "  cvt.rn.satfinite.e2m1x2.f32 b3, %8, %7;\n"
+      "  mov.b32 %0, {b0, b1, b2, b3};\n"
+      "}"
+      : "=r"(w)
+      : "f"(a[0]), "f"(a[1]), "f"(a[2]), "f"(a[3]), "f"(a[4]), "f"(a[5]), "f"(a[6]), "f"(a[7]));
+  return w;
+}
+
 // 16 values -> 16 E2M1 codes (scaled by `scale` first), two per byte,
 // element 2i in the low nibble of byte i.
 template <typename Scale>
 __device__ __forceinline__ uint64_t pack16(const float v[kBlock], Scale scale) {
-  uint64_t out = 0;
+  float s[kBlock];
 #pragma unroll
-  for (int i = 0; i < kBlock; i += 2) {
-    const float2 pair = make_float2(scale(v[i]), scale(v[i + 1]));
-    const __nv_fp4x2_storage_t two = __nv_cvt_float2_to_fp4x2(pair, __NV_E2M1, cudaRoundNearest);
-    out |= static_cast<uint64_t>(two) << (4 * i);
-  }
-  return out;
+  for (int i = 0; i < kBlock; ++i) s[i] = scale(v[i]);
+  return (static_cast<uint64_t>(e2m1x8(s + 8)) << 32) | e2m1x8(s);
 }
 
+// For ITEMS = 1, (kMaxThreads, 2) caps registers at 65536 / 2048 = 32 per
+// thread. At 288 threads per block, 32 is a cliff: 7 blocks (63 warps) fit
+// per SM, but at 33-37 registers only 5 do, and the kernel loses ~18%.
 template <int ITEMS>
-__global__ void __launch_bounds__(kMaxThreads)
+__global__ void __launch_bounds__(kMaxThreads, ITEMS == 1 ? 2 : 1)
 nvfp4_quantize_kernel(const __nv_bfloat16* __restrict__ x, uint8_t* __restrict__ packed,
                       __nv_fp8_e4m3* __restrict__ scales, float* __restrict__ outer_out, int K) {
   const int row = blockIdx.x;
