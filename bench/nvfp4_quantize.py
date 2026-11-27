@@ -36,13 +36,18 @@ SHAPES = [
 ROTATE_BYTES = 512 << 20
 
 
-def _time_ms(fn, inputs, iters=50):
-    """Mean GPU time per call, with launch overhead taken out.
+def _time_ms(fn, inputs, min_calls=50, reps=5):
+    """Median GPU time per call over `reps` timed graph replays.
 
     The calls are captured once into a CUDA graph and replayed, so the GPU
     runs them back to back. Without this, a kernel shorter than the CPU's
     ~5 us launch cost measures the launch, not the kernel.
+
+    The graph visits every buffer in `inputs` (at least `min_calls` calls),
+    so one replay reads the full rotation (>= 512 MB) and nothing it reads
+    can still be in L2 from the previous replay.
     """
+    calls = max(min_calls, len(inputs))
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
@@ -51,16 +56,20 @@ def _time_ms(fn, inputs, iters=50):
     torch.cuda.current_stream().wait_stream(stream)
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
-        for i in range(iters):
+        for i in range(calls):
             fn(inputs[i % len(inputs)])
     graph.replay()  # warm-up replay
     torch.cuda.synchronize()
-    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    start.record()
-    graph.replay()
-    end.record()
-    torch.cuda.synchronize()
-    return start.elapsed_time(end) / iters
+    times = []
+    for _ in range(reps):
+        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        start.record()
+        graph.replay()
+        end.record()
+        torch.cuda.synchronize()
+        times.append(start.elapsed_time(end) / calls)
+    times.sort()
+    return times[len(times) // 2], times[-1] / times[0] - 1
 
 
 def main():
@@ -71,17 +80,20 @@ def main():
         n = max(2, -(-ROTATE_BYTES // size))
         inputs = [torch.randn(m, k, device="cuda", dtype=torch.bfloat16) for _ in range(n)]
         moved = m * k * (2 + 0.5 + 1 / 16) + m * 4  # read bf16, write fp4 + scales + outer
-        t_q = _time_ms(nvfp4_quantize, inputs)
-        t_copy = _time_ms(torch.clone, inputs)
+        t_q, spread = _time_ms(nvfp4_quantize, inputs)
+        t_copy, _ = _time_ms(torch.clone, inputs)
         copy_bw = 2 * size / t_copy / 1e6  # clone reads and writes
         q_bw = moved / t_q / 1e6
-        rows.append((m, k, t_q * 1e3, q_bw, copy_bw, q_bw / copy_bw))
+        rows.append((m, k, t_q * 1e3, q_bw, copy_bw, q_bw / copy_bw, spread))
         del inputs
 
-    print("\n| M | K | quantize (us) | GB/s | copy GB/s | % of copy |")
-    print("|---:|---:|---:|---:|---:|---:|")
-    for m, k, us, bw, cbw, frac in rows:
-        print(f"| {m} | {k} | {us:.1f} | {bw:.0f} | {cbw:.0f} | {100 * frac:.0f}% |")
+    print("\n| M | K | quantize (us) | GB/s | copy GB/s | % of copy | spread |")
+    print("|---:|---:|---:|---:|---:|---:|---:|")
+    for m, k, us, bw, cbw, frac, spread in rows:
+        print(
+            f"| {m} | {k} | {us:.2f} | {bw:.0f} | {cbw:.0f} | {100 * frac:.0f}% "
+            f"| {100 * spread:.1f}% |"
+        )
 
 
 if __name__ == "__main__":
