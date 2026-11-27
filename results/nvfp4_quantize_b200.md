@@ -133,3 +133,45 @@ median of 5 replays; "spread" is slowest / fastest - 1.
 Only M = 128 moved: 2.1 -> 2.3 us, and its copy baseline fell more (about
 1020 -> 801 GB/s), which is why its "% of copy" rose. Every other shape
 already rotated through more than L2 holds. This is the table to beat.
+
+### Tried and reverted: one 32-byte load per thread
+
+Each thread read its 32 bytes with two 16-byte loads, so across a warp each
+load instruction used half of every 32-byte sector it touched (ncu: "16.0
+of 32 bytes per sector", 2x the L1 sectors of L2). sm_100 has 256-bit
+loads (`ld.global.nc.v8.b32`, SASS `LDG.E.ENL2.256.CONSTANT`), so one
+instruction per thread reads 1 KB contiguous per warp.
+
+| M | K | us | % of copy |
+|---:|---:|---:|---:|
+| 128 | 4608 | 2.33 | 81% |
+| 1024 | 4608 | 4.32 | 76% |
+| 8192 | 4608 | 19.88 | 78% |
+| 32768 | 4608 | 71.32 | 83% |
+| 1024 | 2304 | 3.47 | 76% |
+| 65536 | 2304 | 77.07 | 77% |
+| 262144 | 2304 | 301.54 | 76% |
+
+Identical to v2. DRAM already read each byte once; the extra L1 sector
+traffic wasn't on the critical path. Reverted to keep plain CUDA.
+
+### Tried and reverted: two threads per 16-value block
+
+Each thread loads 8 values (16 bytes, contiguous across the warp), and the
+pair joins its block max with one `__shfl_xor_sync(..., 1)`.
+
+| M | K | us | % of copy |
+|---:|---:|---:|---:|
+| 128 | 4608 | 2.46 | 78% |
+| 1024 | 4608 | 6.51 | 50% |
+| 8192 | 4608 | 37.53 | 41% |
+| 32768 | 4608 | 142.56 | 41% |
+| 1024 | 2304 | 3.91 | 67% |
+| 65536 | 2304 | 121.56 | 49% |
+| 262144 | 2304 | 477.38 | 48% |
+
+About 2x slower. A row at K = 4608 now needs 576 threads (18 warps), so
+only 3 rows fit on an SM under the 64-warp limit, against 7 before. Bytes
+in flight per SM fell from 7 to 3 rows' worth, and bandwidth fell with
+them (Little's law: bandwidth = bytes in flight / latency). What limits
+this kernel is how many bytes each SM has requested and not yet received.
