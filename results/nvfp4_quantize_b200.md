@@ -175,3 +175,21 @@ only 3 rows fit on an SM under the 64-warp limit, against 7 before. Bytes
 in flight per SM fell from 7 to 3 rows' worth, and bandwidth fell with
 them (Little's law: bandwidth = bytes in flight / latency). What limits
 this kernel is how many bytes each SM has requested and not yet received.
+
+## v2.1: streaming loads and stores
+
+`__ldcs` / `__stcs` mark every load and store evict-first: each byte is
+touched once, so there's nothing to keep in cache.
+
+| M | K | us | GB/s | % of copy | vs v2 |
+|---:|---:|---:|---:|---:|---:|
+| 128 | 4608 | 2.32 | 652 | 82% | 1.0x |
+| 1024 | 4608 | 4.26 | 2840 | 77% | 1.0x |
+| 8192 | 4608 | 19.57 | 4944 | 79% | 1.02x |
+| 32768 | 4608 | 71.24 | 5433 | 83% | 1.0x |
+| 1024 | 2304 | 3.28 | 1844 | 81% | 1.06x |
+| 65536 | 2304 | 76.99 | 5029 | 77% | 1.0x |
+| 262144 | 2304 | 300.13 | 5160 | 77% | 1.0x |
+
+A small, real gain where the working set is mid-sized (spread is about 1%),
+and nothing slower. Kept.
