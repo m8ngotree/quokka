@@ -41,7 +41,7 @@ __device__ __forceinline__ void load16(const __nv_bfloat16* p, float v[kBlock]) 
   const uint4* q = reinterpret_cast<const uint4*>(p);
 #pragma unroll
   for (int h = 0; h < 2; ++h) {
-    uint4 raw = q[h];
+    uint4 raw = __ldcs(q + h);  // streaming: evict first, read once
     const __nv_bfloat162* pairs = reinterpret_cast<const __nv_bfloat162*>(&raw);
 #pragma unroll
     for (int i = 0; i < 4; ++i) {
@@ -131,8 +131,8 @@ nvfp4_quantize_kernel(const __nv_bfloat16* __restrict__ x, uint8_t* __restrict__
       }
     }
     const size_t blk = static_cast<size_t>(row) * nblocks + b;
-    reinterpret_cast<uint64_t*>(packed)[blk] = out;
-    scales[blk] = scale8;
+    __stcs(reinterpret_cast<unsigned long long*>(packed) + blk, static_cast<unsigned long long>(out));
+    __stcs(reinterpret_cast<unsigned char*>(scales) + blk, *reinterpret_cast<const unsigned char*>(&scale8));
   }
 }
 
