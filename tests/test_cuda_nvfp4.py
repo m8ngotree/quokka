@@ -48,6 +48,19 @@ def test_outliers_zero_rows_and_zero_blocks():
     _check(x.to(torch.bfloat16).cuda())
 
 
+@pytest.mark.parametrize("amax", [1e-36, 2e-38, 1.2e-38, 1e-39, 1e-40])
+def test_tiny_rows(amax):
+    # Rows this small make 1 / (block_scale * outer) overflow; they must
+    # still quantize like the reference, with zeros staying zero.
+    gen = torch.Generator().manual_seed(2)
+    x = torch.randn(8, 256, generator=gen)
+    x = x / x.abs().amax(dim=1, keepdim=True) * amax
+    x[:, ::5] = 0
+    x = x.to(torch.bfloat16)
+    assert x.float().abs().amax() > 0
+    _check(x.cuda())
+
+
 def test_every_bf16_magnitude():
     # All finite positive bf16 bit patterns, with random signs, 16 to a block.
     bits = torch.arange(0x0001, 0x7F80, dtype=torch.int32).to(torch.int16)

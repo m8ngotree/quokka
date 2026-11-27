@@ -54,8 +54,14 @@ def _quantize_with_target(x_blocks, amax_blocks, outer, target):
     # One reciprocal per block, then a multiply per element: what a fast
     # kernel does instead of 16 divisions, written the same way here so the
     # kernel can match bit for bit.
-    inv = 1.0 / torch.where(denom > 0, denom, torch.ones_like(denom))
-    elements = torch.where(denom > 0, round_to_grid(x_blocks * inv, E2M1), 0.0)
+    #
+    # Below denom ~ 2.9e-39 (rows whose amax is under ~1.8e-38, bf16's
+    # subnormal range) 1 / denom overflows to inf, and x * inf would turn
+    # every element into +-6, or NaN where x is 0. Those blocks divide.
+    safe = torch.where(denom > 0, denom, torch.ones_like(denom))
+    inv = 1.0 / safe
+    scaled = torch.where(torch.isinf(inv), x_blocks / safe, x_blocks * inv)
+    elements = torch.where(denom > 0, round_to_grid(scaled, E2M1), 0.0)
     return elements, block_scale
 
 

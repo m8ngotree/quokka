@@ -85,3 +85,16 @@ def test_per_expert_outer_scale():
 def test_rejects_ragged_last_axis():
     with pytest.raises(ValueError):
         quantize_nvfp4(torch.ones(2, 20))
+
+
+@pytest.mark.parametrize("amax", [2e-38, 1e-39, 1e-40])
+def test_tiny_rows_quantize_finitely(amax):
+    # 1 / (block_scale * outer) overflows for rows this small; the
+    # reference divides instead, so elements stay finite and zeros stay zero.
+    x = torch.zeros(1, 32)
+    x[0, 0], x[0, 1], x[0, 17] = amax, amax / 3, amax / 2
+    x = x.to(torch.bfloat16).float()
+    q = quantize_nvfp4(x)
+    assert torch.isfinite(q.elements).all()
+    assert (q.elements[x == 0] == 0).all()
+    assert q.elements[0, 0] == 6 and q.elements[0, 17] == 6
