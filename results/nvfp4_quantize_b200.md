@@ -111,3 +111,25 @@ M. The remaining gap is likely structural: each thread block must finish all
 its loads before the row max exists, so its stores wait behind a barrier,
 while a copy streams loads and stores continuously. The next step is
 asynchronous bulk loads (TMA) that keep memory busy across that barrier.
+
+## v2 re-measured: every buffer replayed, median of 5
+
+The graph above replayed only the first 50 calls. At M = 128 that is
+50 x 1.2 MB of inputs, small enough to stay in L2 between the warm-up and
+the timed replay, so that row read partly from cache. The benchmark now
+replays every rotation buffer (>= 512 MB per replay) and reports the
+median of 5 replays; "spread" is slowest / fastest - 1.
+
+| M | K | us | GB/s | copy GB/s | % of copy | spread |
+|---:|---:|---:|---:|---:|---:|---:|
+| 128 | 4608 | 2.30 | 657 | 801 | 82% | 0.8% |
+| 1024 | 4608 | 4.27 | 2833 | 3719 | 76% | 1.5% |
+| 8192 | 4608 | 19.92 | 4857 | 6249 | 78% | 0.4% |
+| 32768 | 4608 | 71.45 | 5417 | 6541 | 83% | 0.1% |
+| 1024 | 2304 | 3.47 | 1746 | 2292 | 76% | 1.1% |
+| 65536 | 2304 | 77.07 | 5024 | 6539 | 77% | 0.1% |
+| 262144 | 2304 | 299.36 | 5174 | 6741 | 77% | 0.8% |
+
+Only M = 128 moved: 2.1 -> 2.3 us, and its copy baseline fell more (about
+1020 -> 801 GB/s), which is why its "% of copy" rose. Every other shape
+already rotated through more than L2 holds. This is the table to beat.
